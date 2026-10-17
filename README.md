@@ -17,7 +17,8 @@ Laboratorio interactivo de **OAuth 2.0 y OpenID Connect**: recorre un inicio de 
 
 ## Simplificaciones (intencionadas)
 
-- Un único usuario de prueba, sin contraseña: el foco es el protocolo.
+- Usuarios de prueba sin contraseña y MFA simulado: el foco es el protocolo.
+- También actúa como proveedor de identidad del [Authz Lab](https://authz.spliter.dev) (cliente `authz-lab`), con varios usuarios y el claim `amr` para saber si se usó MFA.
 - El código de autorización es un JWT firmado y sin estado (60 s). Un servidor real lo persiste y lo invalida al primer uso.
 - Los tokens se guardan en `sessionStorage` para enseñarlos.
 

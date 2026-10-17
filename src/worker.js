@@ -9,14 +9,27 @@ const CLIENT_ID = "lab-spa";
 const SCOPES = ["openid", "profile", "email"];
 const CODE_TTL = 60; // segundos
 const TOKEN_TTL = 600; // segundos
-const DEMO_USER = {
-  sub: "usr_7f3a9c",
-  name: "Alex Prueba",
-  given_name: "Alex",
-  family_name: "Prueba",
-  email: "alex@lab.spliter.dev",
-  email_verified: true,
+
+// Clientes registrados. Cada uno solo puede volver a sus redirect_uri exactas.
+const CLIENTS = {
+  "lab-spa": { name: "Lab SPA", redirects: (origin) => [`${origin}/`] },
+  "authz-lab": {
+    name: "Authz Lab",
+    redirects: (origin, env) => ["https://authz.spliter.dev/callback", ...(env && env.AUTHZ_LAB_REDIRECT ? [env.AUTHZ_LAB_REDIRECT] : [])],
+  },
 };
+
+// Usuarios de prueba. El Authz Lab usa su "sub" para buscar sus atributos.
+const USERS = [
+  { sub: "usr_7f3a9c", name: "Alex Prueba", given_name: "Alex", family_name: "Prueba", email: "alex@lab.spliter.dev", role: "Usuario de prueba" },
+  { sub: "usr_ana", name: "Ana Torres", given_name: "Ana", family_name: "Torres", email: "ana@lab.spliter.dev", role: "Administradora de IAM" },
+  { sub: "usr_bruno", name: "Bruno Gil", given_name: "Bruno", family_name: "Gil", email: "bruno@lab.spliter.dev", role: "Responsable del equipo Pagos" },
+  { sub: "usr_carla", name: "Carla Ruiz", given_name: "Carla", family_name: "Ruiz", email: "carla@lab.spliter.dev", role: "Desarrolladora en Pagos" },
+  { sub: "usr_elena", name: "Elena Vidal", given_name: "Elena", family_name: "Vidal", email: "elena@lab.spliter.dev", role: "Desarrolladora en Tarjetas" },
+  { sub: "usr_david", name: "David León", given_name: "David", family_name: "León", email: "david@lab.spliter.dev", role: "Auditor" },
+];
+const DEMO_USER = USERS[0];
+const userBySub = (sub) => USERS.find((u) => u.sub === sub);
 
 // ---------- utilidades ----------
 
@@ -143,16 +156,17 @@ function discovery(origin) {
     scopes_supported: SCOPES,
     token_endpoint_auth_methods_supported: ["none"],
     code_challenge_methods_supported: ["S256"],
-    claims_supported: ["sub", "name", "given_name", "family_name", "email", "email_verified", "nonce"],
+    claims_supported: ["sub", "name", "given_name", "family_name", "email", "email_verified", "nonce", "auth_time", "amr"],
   };
 }
 
-function validateAuthorizeParams(p, origin) {
-  const redirectUri = `${origin}/`;
+function validateAuthorizeParams(p, origin, env) {
   // Errores que NO se pueden devolver al cliente por redirección (RFC 6749 §4.1.2.1):
-  if (p.get("client_id") !== CLIENT_ID) return { fatal: `client_id desconocido: "${p.get("client_id") || ""}"` };
-  if (p.get("redirect_uri") !== redirectUri)
-    return { fatal: `redirect_uri no registrada: "${p.get("redirect_uri") || ""}". La única permitida es ${redirectUri}` };
+  const client = CLIENTS[p.get("client_id")];
+  if (!client) return { fatal: `client_id desconocido: "${p.get("client_id") || ""}"` };
+  const allowed = client.redirects(origin, env);
+  if (!allowed.includes(p.get("redirect_uri")))
+    return { fatal: `redirect_uri no registrada: "${p.get("redirect_uri") || ""}". Las permitidas para este cliente son: ${allowed.join(", ")}` };
   // Errores que sí se devuelven al cliente:
   if (p.get("response_type") !== "code") return { error: "unsupported_response_type", desc: "Solo se admite response_type=code" };
   const scopes = (p.get("scope") || "").split(" ").filter(Boolean);
@@ -160,7 +174,7 @@ function validateAuthorizeParams(p, origin) {
   if (scopes.some((s) => !SCOPES.includes(s))) return { error: "invalid_scope", desc: "Scope no admitido" };
   if (!p.get("code_challenge") || p.get("code_challenge_method") !== "S256")
     return { error: "invalid_request", desc: "PKCE obligatorio: falta code_challenge con método S256" };
-  return { ok: true, scopes };
+  return { ok: true, scopes, client };
 }
 
 function redirectWith(redirectUri, params) {
@@ -172,22 +186,25 @@ function redirectWith(redirectUri, params) {
 async function authorize(request, url, env) {
   const origin = url.origin;
   const p = request.method === "POST" ? new URLSearchParams(await request.text()) : url.searchParams;
-  const check = validateAuthorizeParams(p, origin);
+  const check = validateAuthorizeParams(p, origin, env);
   if (check.fatal) return htmlPage("Solicitud rechazada", errorBody(check.fatal), 400);
   if (check.error) return redirectWith(p.get("redirect_uri"), { error: check.error, error_description: check.desc, state: p.get("state") });
 
-  if (request.method === "GET") return htmlPage("Iniciar sesión · IAM Lab", consentBody(p, check.scopes));
+  if (request.method === "GET") return htmlPage("Iniciar sesión · IAM Lab", consentBody(p, check.scopes, check.client));
 
   // POST: el usuario ha respondido en la pantalla de consentimiento.
   if (p.get("decision") !== "allow")
     return redirectWith(p.get("redirect_uri"), { error: "access_denied", error_description: "El usuario ha rechazado el acceso", state: p.get("state") });
 
+  const user = userBySub(p.get("login_user")) || DEMO_USER;
+  const amr = p.get("mfa") === "on" ? ["pwd", "otp", "mfa"] : ["pwd"];
   const code = await signJwt(
     env,
     {
       iss: origin,
-      aud: CLIENT_ID,
-      sub: DEMO_USER.sub,
+      aud: p.get("client_id"),
+      sub: user.sub,
+      amr,
       redirect_uri: p.get("redirect_uri"),
       scope: check.scopes.join(" "),
       nonce: p.get("nonce") || undefined,
@@ -207,12 +224,13 @@ async function token(request, url, env) {
     return oauthError("invalid_request", "El cuerpo debe ser application/x-www-form-urlencoded");
   const p = new URLSearchParams(await request.text());
   if (p.get("grant_type") !== "authorization_code") return oauthError("unsupported_grant_type", "Solo se admite authorization_code");
-  if (p.get("client_id") !== CLIENT_ID) return oauthError("invalid_client", "client_id desconocido", 401);
+  const clientId = p.get("client_id");
+  if (!CLIENTS[clientId]) return oauthError("invalid_client", "client_id desconocido", 401);
 
   const v = await verifyJwt(env, p.get("code"), "authz-code");
   if (!v.ok) return oauthError("invalid_grant", `Código de autorización no válido (${v.reason})`);
   const c = v.payload;
-  if (c.aud !== CLIENT_ID) return oauthError("invalid_grant", "El código no se emitió para este cliente");
+  if (c.aud !== clientId) return oauthError("invalid_grant", "El código no se emitió para este cliente");
   if (p.get("redirect_uri") !== c.redirect_uri)
     return oauthError("invalid_grant", "redirect_uri no coincide con la usada al pedir el código");
   const verifier = p.get("code_verifier") || "";
@@ -224,13 +242,14 @@ async function token(request, url, env) {
   const iat = now();
   const accessToken = await signJwt(
     env,
-    { iss: origin, aud: `${origin}/as/userinfo`, sub: c.sub, client_id: CLIENT_ID, scope: c.scope, iat, exp: iat + TOKEN_TTL, jti: crypto.randomUUID() },
+    { iss: origin, aud: `${origin}/as/userinfo`, sub: c.sub, client_id: clientId, scope: c.scope, iat, exp: iat + TOKEN_TTL, jti: crypto.randomUUID() },
     "at+jwt"
   );
   const scopes = c.scope.split(" ");
-  const idClaims = { iss: origin, aud: CLIENT_ID, sub: c.sub, iat, exp: iat + TOKEN_TTL, auth_time: c.iat, nonce: c.nonce };
-  if (scopes.includes("profile")) Object.assign(idClaims, { name: DEMO_USER.name });
-  if (scopes.includes("email")) Object.assign(idClaims, { email: DEMO_USER.email, email_verified: DEMO_USER.email_verified });
+  const user = userBySub(c.sub) || DEMO_USER;
+  const idClaims = { iss: origin, aud: clientId, sub: c.sub, iat, exp: iat + TOKEN_TTL, auth_time: c.iat, amr: c.amr, nonce: c.nonce };
+  if (scopes.includes("profile")) Object.assign(idClaims, { name: user.name });
+  if (scopes.includes("email")) Object.assign(idClaims, { email: user.email, email_verified: true });
   const idToken = await signJwt(env, idClaims, "JWT");
 
   return json({ access_token: accessToken, token_type: "Bearer", expires_in: TOKEN_TTL, scope: c.scope, id_token: idToken }, 200, { pragma: "no-cache" });
@@ -245,9 +264,10 @@ async function userinfo(request, url, env) {
   if (!v.ok) return json({ error: "invalid_token", error_description: `Token no válido (${v.reason})` }, 401, challenge("invalid_token", v.reason));
   if (v.payload.aud !== `${url.origin}/as/userinfo`) return json({ error: "invalid_token", error_description: "Audiencia incorrecta" }, 401);
   const scopes = v.payload.scope.split(" ");
+  const user = userBySub(v.payload.sub) || DEMO_USER;
   const out = { sub: v.payload.sub };
-  if (scopes.includes("profile")) Object.assign(out, { name: DEMO_USER.name, given_name: DEMO_USER.given_name, family_name: DEMO_USER.family_name });
-  if (scopes.includes("email")) Object.assign(out, { email: DEMO_USER.email, email_verified: DEMO_USER.email_verified });
+  if (scopes.includes("profile")) Object.assign(out, { name: user.name, given_name: user.given_name, family_name: user.family_name });
+  if (scopes.includes("email")) Object.assign(out, { email: user.email, email_verified: true });
   return json(out);
 }
 
@@ -272,15 +292,20 @@ function errorBody(message) {
   return `<p class="as-kicker">Servidor de autorización</p><h1>Solicitud rechazada</h1><p>${escapeHtml(message)}</p><p class="as-note">Cuando el problema está en <code>client_id</code> o <code>redirect_uri</code>, el servidor no redirige de vuelta: no puede fiarse de a dónde mandar al usuario. Por eso ves este error aquí y no en la aplicación.</p><p><a class="btn" href="/">Volver al laboratorio</a></p>`;
 }
 
-function consentBody(p, scopes) {
+function consentBody(p, scopes, client) {
   const hidden = [...p.entries()].map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`).join("");
   const labels = { openid: "Saber quién eres (identificador)", profile: "Tu nombre", email: "Tu correo electrónico" };
   const items = scopes.map((s) => `<li><code>${escapeHtml(s)}</code> ${escapeHtml(labels[s] || s)}</li>`).join("");
+  const users = USERS.map(
+    (u, i) =>
+      `<label class="as-user"><input type="radio" name="login_user" value="${escapeHtml(u.sub)}"${i === 0 ? " checked" : ""}><span><strong>${escapeHtml(u.name)}</strong><small>${escapeHtml(u.role)}</small></span></label>`
+  ).join("");
   return `<p class="as-kicker">Servidor de autorización · IAM Lab</p>
-<h1>¿Permitir el acceso a «Lab SPA»?</h1>
-<p>Has iniciado sesión como <strong>${escapeHtml(DEMO_USER.name)}</strong> (${escapeHtml(DEMO_USER.email)}), un usuario de prueba.</p>
-<p>La aplicación pide:</p><ul class="as-scopes">${items}</ul>
+<h1>¿Permitir el acceso a «${escapeHtml(client.name)}»?</h1>
 <form method="post" action="/as/authorize">${hidden}
+<fieldset class="as-users"><legend>Inicia sesión como (usuarios de prueba, sin contraseña)</legend>${users}</fieldset>
+<label class="as-mfa"><input type="checkbox" name="mfa"> Completar también un segundo factor (MFA)</label>
+<p>La aplicación pide:</p><ul class="as-scopes">${items}</ul>
 <div class="as-actions"><button class="btn btn-primary" name="decision" value="allow">Permitir</button><button class="btn" name="decision" value="deny">Rechazar</button></div>
 </form>
 <p class="as-note">Esta pantalla pertenece al servidor de autorización, no a la aplicación. La aplicación nunca ve tu contraseña: solo recibirá un código de un solo uso.</p>`;

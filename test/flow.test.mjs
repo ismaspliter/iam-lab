@@ -113,3 +113,69 @@ test("rechazo del usuario -> access_denied con state", async () => {
   assert.equal(loc.searchParams.get("error"), "access_denied");
   assert.equal(loc.searchParams.get("state"), "zz");
 });
+
+// ---------- proveedor de identidad para el Authz Lab ----------
+
+const AUTHZ_REDIRECT = "https://authz.spliter.dev/callback";
+
+async function authzCode({ verifier, user = "usr_carla", mfa = false, redirect = AUTHZ_REDIRECT }) {
+  const body = new URLSearchParams({
+    response_type: "code", client_id: "authz-lab", redirect_uri: redirect, scope: "openid profile email",
+    state: "s", nonce: "n", code_challenge: await _internal.s256(verifier), code_challenge_method: "S256",
+    decision: "allow", login_user: user, ...(mfa ? { mfa: "on" } : {}),
+  });
+  return call("/as/authorize", { method: "POST", body, headers: { "content-type": "application/x-www-form-urlencoded" } });
+}
+
+const claims = (jwt) => JSON.parse(new TextDecoder().decode(_internal.b64urlDecode(jwt.split(".")[1])));
+
+test("authz-lab: usuario elegido y MFA llegan al id_token", async () => {
+  const verifier = rand();
+  const res = await authzCode({ verifier, user: "usr_ana", mfa: true });
+  assert.equal(res.status, 302);
+  const loc = new URL(res.headers.get("location"));
+  assert.equal(loc.origin + loc.pathname, AUTHZ_REDIRECT);
+  const tok = await call("/as/token", {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "authorization_code", client_id: "authz-lab", code: loc.searchParams.get("code"), code_verifier: verifier, redirect_uri: AUTHZ_REDIRECT }),
+  });
+  assert.equal(tok.status, 200);
+  const id = claims((await tok.json()).id_token);
+  assert.equal(id.sub, "usr_ana");
+  assert.equal(id.aud, "authz-lab");
+  assert.equal(id.name, "Ana Torres");
+  assert.ok(id.amr.includes("mfa"));
+});
+
+test("sin MFA, amr solo contiene pwd", async () => {
+  const verifier = rand();
+  const loc = new URL((await authzCode({ verifier })).headers.get("location"));
+  const tok = await call("/as/token", {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "authorization_code", client_id: "authz-lab", code: loc.searchParams.get("code"), code_verifier: verifier, redirect_uri: AUTHZ_REDIRECT }),
+  });
+  assert.deepEqual(claims((await tok.json()).id_token).amr, ["pwd"]);
+});
+
+test("un código de authz-lab no se puede canjear como lab-spa", async () => {
+  const verifier = rand();
+  const loc = new URL((await authzCode({ verifier })).headers.get("location"));
+  const tok = await call("/as/token", {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "authorization_code", client_id: "lab-spa", code: loc.searchParams.get("code"), code_verifier: verifier, redirect_uri: AUTHZ_REDIRECT }),
+  });
+  assert.equal((await tok.json()).error, "invalid_grant");
+});
+
+test("authz-lab no puede usar la redirect_uri de lab-spa", async () => {
+  const q = new URLSearchParams({ response_type: "code", client_id: "authz-lab", redirect_uri: ORIGIN + "/", scope: "openid", code_challenge: "x".repeat(43), code_challenge_method: "S256" });
+  assert.equal((await call("/as/authorize?" + q)).status, 400);
+});
+
+test("la pantalla de consentimiento lista los usuarios de prueba", async () => {
+  const q = new URLSearchParams({ response_type: "code", client_id: "authz-lab", redirect_uri: AUTHZ_REDIRECT, scope: "openid", code_challenge: "x".repeat(43), code_challenge_method: "S256" });
+  const html = await (await call("/as/authorize?" + q)).text();
+  assert.match(html, /Authz Lab/);
+  assert.match(html, /Bruno Gil/);
+  assert.match(html, /name="mfa"/);
+});

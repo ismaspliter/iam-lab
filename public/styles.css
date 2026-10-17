@@ -135,3 +135,14 @@ em { font-style: normal; color: var(--accent); }
 .as-note { font-size: 14px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
 
 @media (prefers-reduced-motion: reduce) { .btn, .step { transition: none; } .btn:hover { transform: none; } }
+
+/* Selector de usuarios de prueba y MFA en la pantalla de consentimiento */
+.as-users { border: 0; padding: 0; margin: 8px 0 14px; display: grid; gap: 8px; }
+.as-users legend { font-size: 14px; color: var(--muted); margin-bottom: 8px; padding: 0; }
+.as-user { display: flex; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+.as-user:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.as-user input { accent-color: var(--accent); }
+.as-user span { display: flex; flex-direction: column; line-height: 1.3; }
+.as-user small { color: var(--muted); }
+.as-mfa { display: flex; gap: 10px; align-items: center; margin: 4px 0 8px; cursor: pointer; }
+.as-mfa input { accent-color: var(--accent); }

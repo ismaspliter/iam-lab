@@ -1,0 +1,13 @@
+{
+  // IAM Lab: servidor de autorización de laboratorio + web estática en un único Worker.
+  // El nombre debe coincidir con el del Worker en el panel de Cloudflare.
+  "name": "iam-lab",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-17",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  }
+  // Secreto necesario en producción (no se guarda en el repo):
+  //   PRIVATE_JWK -> clave privada EC P-256 en formato JWK (ver README).
+}

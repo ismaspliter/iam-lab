@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IAM Lab · OAuth 2.0 y OpenID Connect paso a paso</title>
+<meta name="description" content="Laboratorio interactivo: recorre un login real con OAuth 2.0, PKCE y OpenID Connect, inspecciona cada petición y cada token, y provoca los errores típicos.">
+<meta property="og:title" content="IAM Lab · OAuth 2.0 y OpenID Connect paso a paso">
+<meta property="og:description" content="Recorre un login real, inspecciona cada token y rompe el flujo a propósito.">
+<meta property="og:image" content="https://spliter.dev/brand/avatar-400.png">
+<link rel="icon" href="https://spliter.dev/brand/favicon.ico">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="https://spliter.dev"><img src="https://spliter.dev/brand/avatar-64.png" width="32" height="32" alt=""><span>spliter<span class="dot">.</span>dev</span></a>
+  <span class="tag">IAM Lab</span>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>OAuth 2.0 y OpenID Connect, <em>paso a paso</em></h1>
+    <p>Vas a hacer un inicio de sesión real contra un servidor de autorización de laboratorio. En cada paso verás la petición exacta, lo que responde el servidor y por qué. Y podrás romperlo a propósito para ver cómo se defiende.</p>
+    <div class="actors" aria-label="Participantes">
+      <div><strong>Tú</strong><span>el usuario</span></div>
+      <div><strong>Lab SPA</strong><span>la aplicación (este navegador)</span></div>
+      <div><strong>Servidor de autorización</strong><span><code>/as/*</code> en este mismo dominio</span></div>
+    </div>
+  </section>
+
+  <ol class="steps">
+    <!-- 1 -->
+    <li class="step" id="s1">
+      <div class="step-head"><span class="n">1</span><h2>La aplicación prepara la petición</h2></div>
+      <p>Antes de mandarte a iniciar sesión, la aplicación genera tres valores aleatorios y los guarda: <code>state</code> (contra CSRF), <code>nonce</code> (contra reutilizar un id_token) y el <code>code_verifier</code> de PKCE. Al servidor solo le envía el <em>hash</em> del verifier: el <code>code_challenge</code>.</p>
+      <div class="kv" id="s1-values"></div>
+      <p class="label">Petición de autorización</p>
+      <pre class="code" id="s1-url"></pre>
+      <fieldset class="break">
+        <legend>Rómpelo</legend>
+        <label><input type="checkbox" id="opt-csrf"> El atacante cambia el <code>state</code> de vuelta (CSRF)</label>
+        <label><input type="checkbox" id="opt-redirect"> Usar una <code>redirect_uri</code> no registrada</label>
+      </fieldset>
+      <div class="actions">
+        <button class="btn btn-primary" id="go-authorize">Ir a iniciar sesión</button>
+        <button class="btn" id="regen">Generar valores nuevos</button>
+      </div>
+    </li>
+
+    <!-- 2 -->
+    <li class="step" id="s2" aria-disabled="true">
+      <div class="step-head"><span class="n">2</span><h2>Vuelves con un código</h2></div>
+      <p>El servidor te redirige de vuelta con un <code>code</code> de un solo uso y el mismo <code>state</code>. La aplicación comprueba que el <code>state</code> es el que guardó: si no coincide, la respuesta no la ha iniciado ella y la descarta.</p>
+      <pre class="code" id="s2-url"></pre>
+      <div id="s2-check"></div>
+    </li>
+
+    <!-- 3 -->
+    <li class="step" id="s3" aria-disabled="true">
+      <div class="step-head"><span class="n">3</span><h2>Canjear el código por tokens</h2></div>
+      <p>La aplicación envía el código junto con el <code>code_verifier</code> original. El servidor calcula su SHA-256 y lo compara con el <code>code_challenge</code> del paso 1. Así, aunque alguien robara el código, no podría canjearlo.</p>
+      <p class="label">Petición</p>
+      <pre class="code" id="s3-req"></pre>
+      <fieldset class="break">
+        <legend>Rómpelo</legend>
+        <label><input type="checkbox" id="opt-verifier"> Enviar un <code>code_verifier</code> distinto (como haría un atacante con un código robado)</label>
+      </fieldset>
+      <div class="actions"><button class="btn btn-primary" id="go-token">Enviar al endpoint de token</button></div>
+      <p class="label">Respuesta</p>
+      <pre class="code" id="s3-res">—</pre>
+    </li>
+
+    <!-- 4 -->
+    <li class="step" id="s4" aria-disabled="true">
+      <div class="step-head"><span class="n">4</span><h2>Inspeccionar y validar los tokens</h2></div>
+      <p>Un JWT son tres partes en base64url: <span class="jwt-h">cabecera</span>, <span class="jwt-p">datos</span> y <span class="jwt-s">firma</span>. Cualquiera puede leerlo; solo el servidor puede firmarlo. La aplicación valida el <code>id_token</code> con la clave pública del servidor (JWKS).</p>
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" aria-selected="true" data-tok="id_token">id_token</button>
+        <button class="tab" role="tab" aria-selected="false" data-tok="access_token">access_token</button>
+      </div>
+      <pre class="code jwt" id="s4-raw"></pre>
+      <div class="grid2">
+        <div><p class="label">Cabecera</p><pre class="code" id="s4-header"></pre></div>
+        <div><p class="label">Datos (claims)</p><pre class="code" id="s4-payload"></pre></div>
+      </div>
+      <p class="label">Validación</p>
+      <ul class="checks" id="s4-checks"></ul>
+      <fieldset class="break">
+        <legend>Rómpelo</legend>
+        <div class="actions">
+          <button class="btn" id="tamper">Cambiar un dato sin volver a firmar</button>
+          <button class="btn" id="restore">Restaurar token original</button>
+        </div>
+      </fieldset>
+    </li>
+
+    <!-- 5 -->
+    <li class="step" id="s5" aria-disabled="true">
+      <div class="step-head"><span class="n">5</span><h2>Usar el access_token</h2></div>
+      <p>El <code>access_token</code> es la llave para llamar a APIs. El <code>id_token</code> solo sirve para que la aplicación sepa quién eres: no debe usarse para llamar a una API, y este servidor lo rechaza.</p>
+      <div class="actions">
+        <button class="btn btn-primary" data-ui="access_token">Llamar a /userinfo con el access_token</button>
+        <button class="btn" data-ui="id_token">…con el id_token</button>
+        <button class="btn" data-ui="none">…sin token</button>
+      </div>
+      <pre class="code" id="s5-res">—</pre>
+    </li>
+  </ol>
+
+  <section class="notes">
+    <h2>Lo que este laboratorio simplifica</h2>
+    <ul>
+      <li>Hay un único usuario de prueba y no se pide contraseña: el foco está en el protocolo, no en la autenticación.</li>
+      <li>El código de autorización es un JWT firmado y sin estado, válido 60 segundos. Un servidor real lo guarda y lo invalida al primer uso, para impedir que se canjee dos veces.</li>
+      <li>Los tokens se guardan en <code>sessionStorage</code> para poder mostrarlos. En una aplicación real se evita exponerlos así (por ejemplo, con un backend-for-frontend).</li>
+    </ul>
+    <p>Configuración pública del servidor: <a href="/.well-known/openid-configuration">/.well-known/openid-configuration</a> · <a href="/as/jwks">/as/jwks</a></p>
+  </section>
+</main>
+
+<footer class="foot">Hecho por <a href="https://spliter.dev">spliter.dev</a></footer>
+<script src="/app.js" type="module"></script>
+</body>
+</html>

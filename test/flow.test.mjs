@@ -179,3 +179,11 @@ test("la pantalla de consentimiento lista los usuarios de prueba", async () => {
   assert.match(html, /Bruno Gil/);
   assert.match(html, /name="mfa"/);
 });
+
+test("CSP del consentimiento permite redirigir al cliente registrado", async () => {
+  const q = new URLSearchParams({ response_type: "code", client_id: "authz-lab", redirect_uri: AUTHZ_REDIRECT, scope: "openid", code_challenge: "x".repeat(43), code_challenge_method: "S256" });
+  const csp = (await call("/as/authorize?" + q)).headers.get("content-security-policy");
+  assert.match(csp, /form-action 'self' https:\/\/authz\.spliter\.dev(;|$)/);
+  const q2 = new URLSearchParams({ response_type: "code", client_id: "lab-spa", redirect_uri: ORIGIN + "/", scope: "openid", code_challenge: "x".repeat(43), code_challenge_method: "S256" });
+  assert.match((await call("/as/authorize?" + q2)).headers.get("content-security-policy"), /form-action 'self' https:\/\/lab\.example/);
+});

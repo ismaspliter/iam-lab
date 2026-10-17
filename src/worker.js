@@ -190,7 +190,12 @@ async function authorize(request, url, env) {
   if (check.fatal) return htmlPage("Solicitud rechazada", errorBody(check.fatal), 400);
   if (check.error) return redirectWith(p.get("redirect_uri"), { error: check.error, error_description: check.desc, state: p.get("state") });
 
-  if (request.method === "GET") return htmlPage("Iniciar sesión · IAM Lab", consentBody(p, check.scopes, check.client));
+  if (request.method === "GET") {
+    // El POST del consentimiento termina en una redirección a la redirect_uri del cliente,
+    // y los navegadores aplican form-action también a esa redirección: hay que permitirla.
+    const redirectOrigin = new URL(p.get("redirect_uri")).origin;
+    return htmlPage("Iniciar sesión · IAM Lab", consentBody(p, check.scopes, check.client), 200, [redirectOrigin]);
+  }
 
   // POST: el usuario ha respondido en la pantalla de consentimiento.
   if (p.get("decision") !== "allow")
@@ -273,7 +278,8 @@ async function userinfo(request, url, env) {
 
 // ---------- páginas del servidor de autorización ----------
 
-function htmlPage(title, body, status = 200) {
+function htmlPage(title, body, status = 200, formTargets = []) {
+  const formAction = ["'self'", ...formTargets.filter((o) => /^https?:\/\/[^\s;']+$/.test(o))].join(" ");
   return new Response(
     `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><link rel="stylesheet" href="/styles.css"><link rel="icon" href="https://spliter.dev/brand/favicon.ico"></head><body class="as-page"><main class="as-card">${body}</main></body></html>`,
     {
@@ -282,7 +288,7 @@ function htmlPage(title, body, status = 200) {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
         "x-frame-options": "DENY",
-        "content-security-policy": "default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' https://spliter.dev; frame-ancestors 'none'; form-action 'self'",
+        "content-security-policy": `default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' https://spliter.dev; frame-ancestors 'none'; form-action ${formAction}`,
       },
     }
   );

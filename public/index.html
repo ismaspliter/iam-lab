@@ -110,7 +110,7 @@
   <section class="notes">
     <h2>Lo que este laboratorio simplifica</h2>
     <ul>
-      <li>Hay un único usuario de prueba y no se pide contraseña: el foco está en el protocolo, no en la autenticación.</li>
+      <li>Los usuarios son de prueba y no se pide contraseña: el foco está en el protocolo, no en la autenticación. El segundo factor (MFA) se simula con una casilla.</li>
       <li>El código de autorización es un JWT firmado y sin estado, válido 60 segundos. Un servidor real lo guarda y lo invalida al primer uso, para impedir que se canjee dos veces.</li>
       <li>Los tokens se guardan en <code>sessionStorage</code> para poder mostrarlos. En una aplicación real se evita exponerlos así (por ejemplo, con un backend-for-frontend).</li>
     </ul>

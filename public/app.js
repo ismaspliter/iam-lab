@@ -1,5 +1,7 @@
 // IAM Lab · cliente (la "aplicación"): una SPA pública que usa Authorization Code + PKCE.
 
+import { mountTraffic, tracedFetch, animateHops } from "./traffic.js";
+
 const CLIENT_ID = "lab-spa";
 const ORIGIN = location.origin;
 const REDIRECT_URI = ORIGIN + "/";
@@ -28,6 +30,8 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&
 const load = () => { try { return JSON.parse(sessionStorage.getItem(KEY)) || {}; } catch { return {}; } };
 const save = (s) => { try { sessionStorage.setItem(KEY, JSON.stringify(s)); } catch {} };
 let st = load();
+mountTraffic($("flow"));
+const errorOf = async (r) => (r.ok ? "" : (await r.json()).error || "");
 
 function enable(id, on = true) {
   $(id).setAttribute("aria-disabled", on ? "false" : "true");
@@ -71,11 +75,17 @@ function authorizeUrl() {
 
 $("opt-redirect").addEventListener("change", () => showUrl($("s1-url"), authorizeUrl()));
 $("regen").addEventListener("click", () => prepare(true));
-$("go-authorize").addEventListener("click", () => {
+$("go-authorize").addEventListener("click", async () => {
   st.csrf = $("opt-csrf").checked;
   delete st.code; delete st.tokens; delete st.callback;
   save(st);
-  location.assign(authorizeUrl());
+  const url = authorizeUrl();
+  // El navegador sale de la app hacia el servidor de autorización: lo animamos antes de navegar.
+  await animateHops([
+    { from: "spa", to: "user", text: "redirige a /authorize" },
+    { from: "user", to: "as", text: "GET /as/authorize" },
+  ]);
+  location.assign(url);
 });
 
 // ---------- paso 2 ----------
@@ -91,17 +101,24 @@ function handleCallback() {
   showUrl($("s2-url"), shown.toString());
   $("s2-url").innerHTML = $("s2-url").innerHTML.replace('<span class="m">GET</span>', '<span class="m">→</span>');
 
+  const back = (kind, last) => animateHops([
+    { from: "as", to: "user", kind, text: q.has("error") ? `302 · error=${q.get("error")}` : "302 · ?code=…&state=…" },
+    { from: "user", to: "spa", kind: last || kind, text: "GET /?code=…&state=…" },
+  ]);
   if (q.has("error")) {
+    back("bad");
     $("s2-check").innerHTML = result(false, `El servidor devolvió un error: ${q.get("error")}`, esc(q.get("error_description") || ""));
     save(st);
     return true;
   }
   if (returnedState !== st.state) {
+    back("ok", "bad");
     $("s2-check").innerHTML = result(false, "state no coincide: respuesta descartada",
       `La app esperaba <code>${esc(st.state)}</code> y ha recibido <code>${esc(returnedState)}</code>. Esta respuesta no viene de un inicio de sesión que ella haya empezado: podría ser un atacante intentando colarte su propia sesión (login CSRF). No se canjea el código.`);
     save(st);
     return true;
   }
+  back("ok");
   st.code = q.get("code");
   save(st);
   $("s2-check").innerHTML = result(true, "state correcto", "La respuesta corresponde a la petición que inició esta app. Siguiente paso: canjear el código.");
@@ -124,7 +141,7 @@ function renderTokenRequest() {
 $("opt-verifier").addEventListener("change", renderTokenRequest);
 $("go-token").addEventListener("click", async () => {
   $("s3-res").textContent = "Enviando…";
-  const res = await fetch("/as/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: tokenBody() });
+  const res = await tracedFetch({ to: "as", label: "POST /token", describe: async (r) => (r.ok ? "tokens" : errorOf(r)) }, "/as/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: tokenBody() });
   const data = await res.json();
   $("s3-res").innerHTML = `<span class="m">HTTP ${res.status}</span>\n${esc(pretty(data))}`;
   if (res.ok) {
@@ -144,7 +161,7 @@ let jwksKey = null;
 
 async function publicKey() {
   if (jwksKey) return jwksKey;
-  const { keys } = await (await fetch("/as/jwks")).json();
+  const { keys } = await (await tracedFetch({ to: "as", label: "GET /jwks", describe: async () => "clave pública" }, "/as/jwks")).json();
   const k = keys[0];
   jwksKey = await crypto.subtle.importKey("jwk", { kty: k.kty, crv: k.crv, x: k.x, y: k.y }, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
   return jwksKey;
@@ -201,7 +218,8 @@ document.querySelectorAll("[data-ui]").forEach((b) =>
       headers.authorization = `Bearer ${tok}`;
       shown = `Authorization: Bearer ${tok.slice(0, 24)}…`;
     }
-    const res = await fetch("/as/userinfo", { headers });
+    const label = which === "none" ? "GET /userinfo" : `GET /userinfo + ${which}`;
+    const res = await tracedFetch({ to: "api", label, describe: async (r) => (r.ok ? "perfil" : errorOf(r)) }, "/as/userinfo", { headers });
     const www = res.headers.get("www-authenticate");
     $("s5-res").innerHTML = `<span class="m">GET</span> /as/userinfo\n${esc(shown)}\n\n<span class="m">HTTP ${res.status}</span>${www ? `\nWWW-Authenticate: ${esc(www)}` : ""}\n${esc(pretty(await res.json()))}`;
   })

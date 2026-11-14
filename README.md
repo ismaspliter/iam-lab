@@ -4,6 +4,8 @@ Laboratorio interactivo de **OAuth 2.0 y OpenID Connect**: recorre un inicio de 
 
 **→ [lab.spliter.dev](https://lab.spliter.dev)**
 
+> **Cómo está hecho:** programado en pareja con IA ([Claude Code](https://claude.com/claude-code)). Qué enseña el lab, cómo se estructura y las decisiones de seguridad son mías; abajo explico las principales.
+
 ## Qué incluye
 
 - **Servidor de autorización de laboratorio** en un Cloudflare Worker: discovery (`/.well-known/openid-configuration`), JWKS, `/authorize` con pantalla de consentimiento, `/token` y `/userinfo`. Tokens JWT firmados de verdad con **ES256**.
@@ -15,6 +17,14 @@ Laboratorio interactivo de **OAuth 2.0 y OpenID Connect**: recorre un inicio de 
   5. Llamada a `/userinfo`.
 - **Tráfico en vivo**: un panel fijo anima cada petición real (redirecciones, `/token`, `/jwks`, `/userinfo`) entre tú, la SPA, el servidor de autorización y la API, con el código HTTP y el tiempo medido. Sin dependencias (SVG + `requestAnimationFrame`, en `public/traffic.js`) y respeta `prefers-reduced-motion`.
 - **Modo "Rómpelo"**: login CSRF (`state` cambiado), `redirect_uri` no registrada, `code_verifier` incorrecto, token manipulado sin volver a firmar, y llamar a la API con el `id_token` o sin token.
+
+## Decisiones
+
+- **Solo Authorization Code + PKCE (`S256`).** Es el flujo que recomienda OAuth 2.1 para aplicaciones de navegador. El flujo implícito, el de contraseña o PKCE `plain` no existen aquí: enseñarlos sería enseñar lo que ya no se debe hacer.
+- **Firma ES256 de verdad y JWKS publicado.** Con un secreto compartido (HS256) el cliente podría falsificar tokens; con clave asimétrica cualquiera valida y solo el servidor firma, como en un proveedor real. El servidor rechaza cualquier otro `alg`.
+- **Romperlo enseña más que leerlo.** Cada ataque del modo "Rómpelo" corresponde a una comprobación concreta (`state`, `redirect_uri`, PKCE, firma, audiencia). Si la quitas, ves exactamente qué se rompe.
+- **Mostrar el tráfico, no contarlo.** El panel de tráfico en vivo dibuja las peticiones reales mientras ocurren, porque OAuth se entiende mal cuando no ves quién habla con quién.
+- **Sin dependencias.** Todo es Web Crypto y JavaScript plano, para que cada paso criptográfico se pueda leer en el código sin atravesar una librería.
 
 ## Simplificaciones (intencionadas)
 

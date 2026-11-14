@@ -13,6 +13,7 @@ Laboratorio interactivo de **OAuth 2.0 y OpenID Connect**: recorre un inicio de 
   3. Canje del código en `/token`.
   4. Decodificación y validación del `id_token` y del `access_token` contra el JWKS.
   5. Llamada a `/userinfo`.
+- **Tráfico en vivo**: un panel fijo anima cada petición real (redirecciones, `/token`, `/jwks`, `/userinfo`) entre tú, la SPA, el servidor de autorización y la API, con el código HTTP y el tiempo medido. Sin dependencias (SVG + `requestAnimationFrame`, en `public/traffic.js`) y respeta `prefers-reduced-motion`.
 - **Modo "Rómpelo"**: login CSRF (`state` cambiado), `redirect_uri` no registrada, `code_verifier` incorrecto, token manipulado sin volver a firmar, y llamar a la API con el `id_token` o sin token.
 
 ## Simplificaciones (intencionadas)
